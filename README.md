@@ -55,33 +55,31 @@ The [training](examples/training) folder contains a Docker file with requirement
 
 #### Overview
 
-The Docker container installs the required libraries and creates the following folder structure:
-```
+The Docker image installs the required libraries and creates the following folder structure:
+``` Docker
 /root/trainer
          ├── text-classification-training.py
          ├── data
          |     ├── test.csv (optional)
          |     ├── dev.csv (optional)
          │     └── train.csv
-         └─- checkpoint
+         └── checkpoint
                ├── final-model.pt
                ├── best-model.pt
                └── training.log
 ```
 
-The [text classification script](examples/training/text-classification-training.py) also discusses the parameters more in-depth.
-
+The [text classification script](text-classification-training.py) also discusses the parameters more in-depth.
 
 The gist is, that at training time, the Docker container executes the text classification script which:
-* Parses the supplied arguments
-* Handles ingress of test.csv / train.csv / dev.csv files from the GCS bucket to the container
-* Initiates a Flair text-classification loop with the parsed arguments
-* Handles egress of the trained models and logging files to the GCS bucket
+* Parses the supplied arguments.
+* Handles ingress of test.csv / train.csv / dev.csv files from the GCS bucket to the container.
+* Initiates a Flair text-classification loop with the parsed arguments.
+* Handles egress of the trained models and logging files to the GCS bucket.
 
 #### Building the Docker image
 
 While we can build the Docker image locally, this might take a long time given that we are reliant on hefty dependencies.
-
 
 Using the cloud SDK, navigate to the folder of the Dockerfile.
 With the following snippet we can submit the Docker image to be built and stored in Google Cloud Container Registry.
@@ -105,7 +103,10 @@ gsutil cp *.csv gs://flair-bucket/custom-container/dataset/
 ```
 
 #### Testing the Docker
-Rather than submitting the job immediately to AI platform, we should first test the image in Cloud Shell. Through this way we can quickly validate and debug, and saves us valuable time rather than having to wait on AI platform spinning up machines.
+Rather than submitting the job immediately to AI platform, we should first test whether the Docker works.
+You can do this either locally, by using the Cloud SDK CLI or by making use of Cloud Shell.
+
+Cloud Shell is the CLI in Google Cloud, and thus negates the fact that you would need to download the built image locally before you test it. Through this way we can quickly validate and debug, and saves us valuable time rather than having to wait on AI platform spinning up machines.
 
 By navigating to [https://console.cloud.google.com/](https://console.cloud.google.com/) and run the following command in Cloud Shell.
 ```shell
@@ -153,12 +154,118 @@ gcloud ai-platform jobs submit training $JOB_NAME \
 
 ## Deployment
 
-To be added later.
+From my experience, deploying a fine-tuned text-classifier model based on [sentence transformers](https://github.com/UKPLab/sentence-transformers) on AI platform was quite a challenge:
+
+* In general, AI Platform requires you to build a deployment package in order to deploy models.
+* However, Pytorch models are not natively supported and are considered a [custom prediction routine](https://cloud.google.com/ai-platform/prediction/docs/deploying-models#create_a_model_version).
+* Given that you are making use of a [custom prediction routine](https://cloud.google.com/ai-platform/prediction/docs/deploying-models#create_a_model_version), the deployment package must be **500 MB or less**.
+** In fact, my best-model.pt file was already over 500 MB, excluding any required dependencies.  
+* Finally, while there are machine types that support deployment packages up to 2 GB, they [do not support custom prediction routines](https://cloud.google.com/ai-platform/prediction/docs/machine-types-online-prediction#available_machine_types) at this time.
+* In addition, these larger machine types [do not scale down to 0](https://cloud.google.com/ai-platform/prediction/docs/reference/rest/v1/projects.models.versions#autoscaling), but will always have 1 node running.
+
+As such, serving predictions on AI Platform was technically unfeasible and financially unattractive in comparison to [Cloud Run](https://cloud.google.com/run)
+
+Cloud Run is a suitable alternative for this case is due to the following reasons:
+* By making use of [Docker containers](https://cloud.google.com/run#all-features) we can package our code in a straightforward way.
+* There is a seemingly generous free tier and you are [billed per 100 milliseconds of uptime](https://cloud.google.com/run#section-13).
+* The service can [scale down to 0](https://cloud.google.com/run#all-features).
+
+Therefore, the example I present makes use of a Docker file to host the model on Cloud Run and using FastAPI to serve predictions.
+
+
+### Overview
+
+The Docker image installs the required libraries and creates the following folder structure:
+
+``` Docker
+/root/
+   ├── app.py
+   └── model
+         └── best-model.pt
+```
+With [app.py](app.py) being the FastAPI endpoint that handled the incoming request, passes the text to the model, and returns the labels and probabilities.  
+
+
+#### Building the Docker image
+While we can build the Docker image locally, this might take a long time given that we are reliant on hefty dependencies.
+
+Using the cloud SDK, navigate to the folder of the Dockerfile.
+With the following snippet we can submit the Docker image to be built and stored in Google Cloud Container Registry.
+```shell
+export PROJECT_ID=$(gcloud config get-value project)
+export IMAGE_URI=gcr.io/$PROJECT_ID/flair/text-classification-endpoint:latest
+
+# Build the container and submit to Cloud Container Registry.
+gcloud builds submit --tag $IMAGE_URI
+```
+
+Once Cloud Build is finished, you can create a Cloud Run endpoint with your container.
+
+For the full list of parameters, please refer to [this documentation](https://cloud.google.com/sdk/gcloud/reference/run/deploy).
+```shell
+export PROJECT_ID=$(gcloud config get-value project)
+export IMAGE_URI=gcr.io/$PROJECT_ID/flair/text-classification-endpoint:latest
+export REGION=europe-west1
+
+# Deploy to cloud run.
+gcloud run deploy text-classification \
+          --image $IMAGE_URI \
+          --allow-unauthenticated \
+          --platform managed \
+          --region $REGION \
+          --timeout 60 \
+          --memory 2Gi \
+          --port 8080
+```
+
+Wait a few moments until the deployment is complete. After successful completion, the command line displays the service URL.
+
+#### Testing the endpoint   
+
+After we have deployed the endpoint, we should test it before using it in production environments.
+
+```shell
+# Programmatically returns the endpoint url.
+export ENDPOINT_URL=$(gcloud run services describe text-classification --platform managed --region europe-west1 --format 'value(
+status.url)')
+
+# Print the endpoint url
+echo $ENDPOINT_URL
+```
+
+FastAPI also generates documentation of your endpoint at the /docs suffix of your url.
+
+```shell
+# Programmatically returns the endpoint url.
+export ENDPOINT_URL=$(gcloud run services describe text-classification --platform managed --region europe-west1 --format 'value(
+status.url)')
+
+# Visit this url to check the automatically generated documentation of the endpoint.
+echo $ENDPOINT_URL/docs
+```
+
+Let your newly created endpoint classify "Hello Flair."
+
+```shell
+# Programmatically returns the endpoint url.
+export ENDPOINT_URL=$(gcloud run services describe text-classification --platform managed --region europe-west1 --format 'value(
+status.url)')
+
+# Make a post request to test the endpoint with "Hello Flair."
+curl -X POST $ENDPOINT_URL/classify-text -H  "accept: application/json" -H  "Content-Type: application/json" -d "{\"text\":\"Hello Flair.\"}"
+
+```
+
+If everything is working correctly, the response of the model will be in the following form:
+```
+[{"_value":"label","_score":probability}]
+```
+
 ---
 
 ### Contributions & Suggestions
 
-[Pull requests](https://github.com/robinvanschaik/flair-on-gcp/pulls) and [issues](https://github.com/robinvanschaik/flair-on-gcp/issues) are very welcome!
+[Pull requests](https://github.com/robinvanschaik/flair-on-gcp/pulls) and [issues](https://github.com/robinvanschaik/flair-on-gcp/issues) are welcome!
 
 I am hoping to learn more and to improve the code.
 
