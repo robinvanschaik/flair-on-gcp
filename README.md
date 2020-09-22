@@ -1,7 +1,7 @@
 # flair-on-gcp
 **Please note: this repository is not affiliated with Google.**
 
-This repository adds examples on how to train [Flair](https://github.com/flairNLP/flair) on [Google Cloud Platform](https://cloud.google.com/) (GCP) [AI Platform](https://cloud.google.com/ai-platform).
+This repository adds examples on how to train [Flair](https://github.com/flairNLP/flair) text classification model on [Google Cloud Platform](https://cloud.google.com/) (GCP) [AI Platform](https://cloud.google.com/ai-platform).
 
 It also covers how to deploy a pre-trained Flair-model on GCP [Cloud Run](https://cloud.google.com/run) using [Cloud Build](https://cloud.google.com/cloud-build) and [Cloud Registry](https://cloud.google.com/container-registry) to serve predictions.
 
