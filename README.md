@@ -136,7 +136,7 @@ export IMAGE_URI=gcr.io/$PROJECT_ID/flair/text-classification:latest
 export REGION=europe-west1
 export JOB_NAME=custom_container_job_$(date +%Y%m%d_%H%M%S)
 
-# Submit training to AI platform.
+# Submit training to AI platform using.
 gcloud ai-platform jobs submit training $JOB_NAME \
   --region $REGION \
   --master-image-uri $IMAGE_URI \
@@ -148,6 +148,32 @@ gcloud ai-platform jobs submit training $JOB_NAME \
   --gcs_output_path "custom-container/output/" \
   --gcs_bucket_name "flair-bucket"   \
   --delimiter ","
+```
+Or if you make use of the Docker image which contains CUDA support, you can accelerate training by using a GPU.
+
+In this example we attach a single NVIDIA Tesla K80 GPU by passing the ```BASIC_GPU``` to the ```scale-tier``` flag.
+
+```shell
+export PROJECT_ID=$(gcloud config get-value project)
+export IMAGE_URI=gcr.io/$PROJECT_ID/flair/text-classification:latest
+export REGION=europe-west1
+export JOB_NAME=custom_container_job_$(date +%Y%m%d_%H%M%S)
+
+gcloud ai-platform jobs submit training $JOB_NAME \
+  --region $REGION \
+  --master-image-uri $IMAGE_URI \
+  --scale-tier BASIC_GPU \
+  -- \
+  --label_column_index 0 \
+  --text_column_index 1 \
+  --epochs 1   \
+  --patience 1   \
+  --gcs_data_path "custom-container/dataset/"  \
+  --gcs_output_path "custom-container/output/" \
+  --gcs_bucket_name "flair-bucket"   \
+  --delimiter "," \
+  --model_type "TransformerDocumentEmbeddings" \
+  --model "sentence-transformers/xlm-r-100langs-bert-base-nli-stsb-mean-tokens"
 ```
 
 ---
@@ -170,7 +196,7 @@ Cloud Run is a suitable alternative for this case is due to the following reason
 * There is a seemingly generous free tier and you are [billed per 100 milliseconds of uptime](https://cloud.google.com/run#section-13).
 * The service can [scale down to 0](https://cloud.google.com/run#all-features).
 
-Therefore, the example I present makes use of a Docker file to host the model on Cloud Run and using FastAPI to serve predictions.
+Therefore, the example I present makes use of a Docker file to host the model on Cloud Run and uses FastAPI to serve predictions.
 
 
 ### Overview

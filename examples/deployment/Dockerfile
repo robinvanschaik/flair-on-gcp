@@ -1,6 +1,6 @@
 # Dockerfile
 # Uses python 3.8 with FastAPI pre-installed as a base image.
-FROM tiangolo/uvicorn-gunicorn-fastapi:python3.8
+FROM tiangolo/uvicorn-gunicorn-fastapi:python3.8-slim
 WORKDIR /root
 
 # Expose the set port.
@@ -9,7 +9,7 @@ EXPOSE ${PORT}
 
 # In production you want to pin dependencies.
 # Installs flair, sentence_transformers and FastAPI.
-RUN pip install -U flair sentence_transformers
+RUN pip install --no-cache-dir -U flair sentence_transformers
 
 # Copies the trainer code.
 # Creates data folder.
