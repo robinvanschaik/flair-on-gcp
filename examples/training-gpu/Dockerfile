@@ -1,12 +1,17 @@
 # Dockerfile
-# Uses pytorch + CUDA as a base image.
-# Is a convenient way use GPU acceleration in Flair.
-FROM pytorch/pytorch:1.6.0-cuda10.1-cudnn7-runtime
+# Uses pytorch + CUDA + Apex as a base image.
+FROM pytorchignite/apex:latest
 WORKDIR /root
 
-# # In production you want to pin dependencies.
-# Installs flair and huggingface transformers sentence-transformers.
-RUN pip install --no-cache-dir -U pip install flair sentence_transformers google-cloud-storage
+# Install git.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends git && \
+    apt-get purge -y --auto-remove \
+    && rm -rf /var/lib/apt/lists/*
+
+# In production you want to pin dependencies.
+# Installs flair and sentence-transformers.
+RUN pip install --no-cache-dir -U pip install git+https://github.com/flairNLP/flair.git sentence_transformers google-cloud-storage
 
 # Copies the trainer code
 # Creates data folder
