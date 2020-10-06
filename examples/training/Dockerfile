@@ -5,7 +5,9 @@ WORKDIR /root
 
 # # In production you want to pin dependencies.
 # Installs flair and sentence-transformers.
-RUN pip install -U pip install -U flair sentence_transformers google-cloud-storage
+RUN pip install flair \
+                sentence_transformers \
+                google-cloud-storage==1.31.0
 
 # Copies the trainer code
 # Creates data folder

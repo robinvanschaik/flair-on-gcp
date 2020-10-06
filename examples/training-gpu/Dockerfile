@@ -10,8 +10,9 @@ RUN apt-get update && \
     && rm -rf /var/lib/apt/lists/*
 
 # In production you want to pin dependencies.
-# Installs flair and sentence-transformers.
-RUN pip install --no-cache-dir -U pip install git+https://github.com/flairNLP/flair.git sentence_transformers google-cloud-storage
+# Installs flair and Google Cloud Storage.
+RUN pip install --no-cache-dir -U git+https://github.com/flairNLP/flair.git \
+                google-cloud-storage==1.31.0
 
 # Copies the trainer code
 # Creates data folder

@@ -2,6 +2,8 @@
 import argparse
 from os import listdir
 from os.path import isfile, join
+import importlib
+
 # Import modules from flair.
 from flair.models import TextClassifier
 from flair.trainers import ModelTrainer
@@ -12,12 +14,24 @@ from flair.embeddings import SentenceTransformerDocumentEmbeddings
 from flair.embeddings import TransformerDocumentEmbeddings
 from flair.embeddings import WordEmbeddings, FlairEmbeddings, DocumentRNNEmbeddings
 
+
 # For interfacing with google cloud storage.
 from google.cloud import storage
 
 # Only log essentials.
 import logging
 logging.basicConfig(level=logging.ERROR)
+
+# Sampler helper function.
+def sampler_helper(sampler):
+    """Helper function from parsing the sampler arg and calling the right class."""
+    if sampler is None or sampler == "None":
+        return None
+    else:
+        sampler_module = importlib.import_module('flair.samplers')
+        sampler_class = getattr(sampler_module, sampler)
+        return sampler_class
+
 
 def get_args():
     """Parses the arguments as input for the training function.
@@ -36,13 +50,18 @@ def get_args():
                               Defaults to 10.
         --patience:           Indicates the number of epochs without improvement before aborting.
                               Defaults to 3.
+        --sampler:            Indicates which sampler should be used (None,
+                              ChunkSampler,
+                              ImbalancedClassificationDatasetSampler,
+                              or ExpandingChunkSampler).
         --gcs_data_path:      The Google Cloud Storage (gcs) folder path containing the data.
         --gcs_output_path:    The Google Cloud Storage (gcs) folder path for storing the outputs.
       Output:
         Dictionary of arguments.
     """
 
-    parser = argparse.ArgumentParser(description='Text Classification with Flair On GCP via Docker Container')
+    parser = argparse.ArgumentParser(
+        description='Text Classification with Flair On GCP via Docker Container.')
 
     parser.add_argument(
         '--label_column_index',
@@ -89,6 +108,14 @@ def get_args():
         default=3,
         metavar='N',
         help='Indicates the number of epochs without improvement before aborting.')
+
+    parser.add_argument(
+        '--sampler',
+        type=str,
+        default="None",
+        metavar='N',
+        help='Indicates which sampler should be used (None, ChunkSampler'
+        'ImbalancedClassificationDatasetSampler, ExpandingChunkSampler).')
 
     parser.add_argument(
         '--gcs_bucket_name',
@@ -142,7 +169,7 @@ def gcs_data_to_docker(gcs_bucket_name, gcs_data_path):
 
 def initialize_training(text_column_index, label_column_index, delimiter=';',
                         model_type="TransformerDocumentEmbeddings", model='sentence-transformers/xlm-r-100langs-bert-base-nli-stsb-mean-tokens',
-                        max_epochs=10, patience=3):
+                        max_epochs=10, patience=3, sampler=None):
     """
     Create a text classification model using FLAIR and SentenceTransformers/Huggingface Transformers.
     ------------------------
@@ -156,6 +183,9 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
     model_type: SentenceTransformerDocumentEmbeddings or TransformerDocumentEmbeddings
     model: Which model to use. Defaults to a multilingual model.
     max_epochs: Number of epochs to train the model for.
+    patience: Number of epochs without improvement before terminating training.
+    sampler:
+    use_amp=True
     ------------------------
     Output:
     best-model.pt
@@ -164,7 +194,8 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
     """
 
     # 1. Column format indicating which columns hold the text and label(s)
-    column_name_map = {text_column_index: "text", label_column_index: "label_topic"}
+    column_name_map = {text_column_index: "text",
+                       label_column_index: "label_topic"}
 
     # 2. Load corpus containing training, test and dev data and if CSV has a header, you can skip it
     corpus: Corpus = CSVClassificationCorpus("./trainer/data/",
@@ -181,24 +212,29 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
 
     # 4. Initialize the sentence_transformers model.
     if model_type == "SentenceTransformerDocumentEmbeddings":
-            document_embeddings = SentenceTransformerDocumentEmbeddings(model)
+        document_embeddings = SentenceTransformerDocumentEmbeddings(model)
     elif model_type == "TransformerDocumentEmbeddings":
-        document_embeddings = TransformerDocumentEmbeddings(model, fine_tune=True)
+        document_embeddings = TransformerDocumentEmbeddings(
+            model, fine_tune=True)
     elif model_type == "WordEmbeddings":
         word_embeddings = [WordEmbeddings(model)]
-        document_embeddings = DocumentRNNEmbeddings(word_embeddings, hidden_size=256)
+        document_embeddings = DocumentRNNEmbeddings(
+            word_embeddings, hidden_size=256)
     elif model_type == "StackedEmbeddings":
         document_embeddings = DocumentRNNEmbeddings([
-                                    #WordEmbeddings('nl'),
-                                    SentenceTransformerDocumentEmbeddings('distiluse-base-multilingual-cased'),
-                                    FlairEmbeddings(model + '-backward-fast'),
-                                    FlairEmbeddings(model + '-forward-fast')
-                                   ])
+            # WordEmbeddings('nl'),
+            SentenceTransformerDocumentEmbeddings(
+                'distiluse-base-multilingual-cased'),
+            FlairEmbeddings(model + '-backward'),
+            FlairEmbeddings(model + '-forward')
+        ])
     else:
-        raise Exception("Pick SentenceTransformerDocumentEmbeddings, StackedEmbeddings, WordEmbeddings or TransformerDocumentEmbeddings.")
+        raise Exception(
+            "Pick SentenceTransformerDocumentEmbeddings, StackedEmbeddings, WordEmbeddings or TransformerDocumentEmbeddings.")
 
     # 5. create the text classifier
-    classifier = TextClassifier(document_embeddings, label_dictionary=label_dict)
+    classifier = TextClassifier(
+        document_embeddings, label_dictionary=label_dict)
 
     # 6. initialize the text classifier trainer with Adam optimizer
     trainer = ModelTrainer(classifier,
@@ -211,7 +247,8 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
                   learning_rate=3e-5,  # use very small learning rate
                   max_epochs=max_epochs,
                   patience=patience,
-                  checkpoint=True)
+                  checkpoint=True,
+                  sampler=sampler)
 
 
 def training_output_to_gcs(gcs_bucket_name, gcs_output_path):
@@ -224,7 +261,8 @@ def training_output_to_gcs(gcs_bucket_name, gcs_output_path):
 
     storage_client = storage.Client()
     bucket = storage_client.get_bucket(gcs_bucket_name)
-    files = [f for f in listdir("./trainer/checkpoint/") if isfile(join("./trainer/checkpoint/", f))]
+    files = [f for f in listdir("./trainer/checkpoint/")
+             if isfile(join("./trainer/checkpoint/", f))]
     for file in files:
         localFile = "./trainer/checkpoint/" + file
         blob = bucket.blob(gcs_output_path + file)
@@ -237,7 +275,8 @@ def main():
     args = get_args()
 
     # Copy data from GCS to the Docker.
-    gcs_data_to_docker(gcs_data_path=args.gcs_data_path, gcs_bucket_name=args.gcs_bucket_name)
+    gcs_data_to_docker(gcs_data_path=args.gcs_data_path,
+                       gcs_bucket_name=args.gcs_bucket_name)
 
     # Once the data is copied to the Docker, initialize training.
     initialize_training(text_column_index=args.text_column_index,
@@ -246,10 +285,13 @@ def main():
                         model_type=args.model_type,
                         model=args.model,
                         max_epochs=args.epochs,
-                        patience=args.patience)
+                        patience=args.patience,
+                        sampler=sampler_helper(args.sampler))
 
     # Copy the training output from the Docker to GCS.
-    training_output_to_gcs(gcs_output_path=args.gcs_output_path, gcs_bucket_name=args.gcs_bucket_name)
+    training_output_to_gcs(gcs_output_path=args.gcs_output_path,
+                           gcs_bucket_name=args.gcs_bucket_name)
+
 
 if __name__ == '__main__':
     main()

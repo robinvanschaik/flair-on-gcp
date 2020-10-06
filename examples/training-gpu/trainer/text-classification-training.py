@@ -3,6 +3,7 @@ import argparse
 from os import listdir
 from os.path import isfile, join
 import importlib
+
 # Import modules from flair.
 from flair.models import TextClassifier
 from flair.trainers import ModelTrainer
@@ -13,6 +14,7 @@ from flair.embeddings import SentenceTransformerDocumentEmbeddings
 from flair.embeddings import TransformerDocumentEmbeddings
 from flair.embeddings import WordEmbeddings, FlairEmbeddings, DocumentRNNEmbeddings
 
+
 # For interfacing with google cloud storage.
 from google.cloud import storage
 
@@ -22,7 +24,6 @@ logging.basicConfig(level=logging.ERROR)
 
 # Sampler helper function.
 def sampler_helper(sampler):
-
     """Helper function from parsing the sampler arg and calling the right class."""
     if sampler is None or sampler == "None":
         return None
@@ -53,6 +54,8 @@ def get_args():
                               ChunkSampler,
                               ImbalancedClassificationDatasetSampler,
                               or ExpandingChunkSampler).
+        --use_amp:            Indicates which whether Automatic Mixed Precision
+                              should be used.
         --gcs_data_path:      The Google Cloud Storage (gcs) folder path containing the data.
         --gcs_output_path:    The Google Cloud Storage (gcs) folder path for storing the outputs.
       Output:
@@ -111,10 +114,18 @@ def get_args():
     parser.add_argument(
         '--sampler',
         type=str,
-        default=None,
+        default="None",
         metavar='N',
         help='Indicates which sampler should be used (None, ChunkSampler'
         'ImbalancedClassificationDatasetSampler, ExpandingChunkSampler).')
+
+    parser.add_argument(
+        '--use_amp',
+        type=int,
+        default=1,
+        metavar='N',
+        help='Indicates which whether Automatic Mixed Precision should be used.'
+             '1 for True, 0 for False')
 
     parser.add_argument(
         '--gcs_bucket_name',
@@ -168,7 +179,7 @@ def gcs_data_to_docker(gcs_bucket_name, gcs_data_path):
 
 def initialize_training(text_column_index, label_column_index, delimiter=';',
                         model_type="TransformerDocumentEmbeddings", model='sentence-transformers/xlm-r-100langs-bert-base-nli-stsb-mean-tokens',
-                        max_epochs=10, patience=3, sampler=None, use_amp=True):
+                        max_epochs=10, patience=3, sampler=None, use_amp=0):
     """
     Create a text classification model using FLAIR and SentenceTransformers/Huggingface Transformers.
     ------------------------
@@ -191,8 +202,6 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
     final-model.pt
     training.log
     """
-
-
 
     # 1. Column format indicating which columns hold the text and label(s)
     column_name_map = {text_column_index: "text",
@@ -248,6 +257,7 @@ def initialize_training(text_column_index, label_column_index, delimiter=';',
                   learning_rate=3e-5,  # use very small learning rate
                   max_epochs=max_epochs,
                   patience=patience,
+                  use_amp=bool(use_amp),
                   checkpoint=True,
                   sampler=sampler)
 
@@ -287,7 +297,8 @@ def main():
                         model=args.model,
                         max_epochs=args.epochs,
                         patience=args.patience,
-                        sampler=sampler_helper(args.sampler))
+                        sampler=sampler_helper(args.sampler),
+                        use_amp=args.use_amp)
 
     # Copy the training output from the Docker to GCS.
     training_output_to_gcs(gcs_output_path=args.gcs_output_path,
